@@ -1,31 +1,31 @@
-From 0736e110eea9d06e3d874840c75da6067b030a52 Mon Sep 17 00:00:00 2001
+From 603ab5d6e8a34940573741e7c07d06261e96b392 Mon Sep 17 00:00:00 2001
 From: ackPeng <1143590135@qq.com>
-Date: Tue, 28 Oct 2025 15:38:32 +0800
-Subject: [PATCH] add seeed recomputer rk3588 dts
+Date: Wed, 29 Oct 2025 11:33:28 +0800
+Subject: [PATCH] add rk3588-recomputer-devkit support
 
 ---
  arch/arm64/boot/dts/rockchip/Makefile         |    1 +
- .../dts/rockchip/rk3588-recomputer-rk.dts     | 1340 +++++++++++++++++
+ .../dts/rockchip/rk3588-recomputer-devkit.dts | 1340 +++++++++++++++++
  2 files changed, 1341 insertions(+)
- create mode 100644 arch/arm64/boot/dts/rockchip/rk3588-recomputer-rk.dts
+ create mode 100644 arch/arm64/boot/dts/rockchip/rk3588-recomputer-devkit.dts
 
 diff --git a/arch/arm64/boot/dts/rockchip/Makefile b/arch/arm64/boot/dts/rockchip/Makefile
-index c3785f51b4c4..55ad9ae1131b 100644
+index c3785f51b4c4..91bd7fadb576 100644
 --- a/arch/arm64/boot/dts/rockchip/Makefile
 +++ b/arch/arm64/boot/dts/rockchip/Makefile
 @@ -448,6 +448,7 @@ dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3588s-tablet-rk806-single-v10.dtb
  dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3588s-tablet-v10.dtb
  dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3588s-tablet-v11.dtb
  dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3566-luckfox-core3566.dtb
-+dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3588-recomputer-rk.dtb
++dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3588-recomputer-devkit.dtb
  
  subdir-y := $(dts-dirs) overlay
  
-diff --git a/arch/arm64/boot/dts/rockchip/rk3588-recomputer-rk.dts b/arch/arm64/boot/dts/rockchip/rk3588-recomputer-rk.dts
+diff --git a/arch/arm64/boot/dts/rockchip/rk3588-recomputer-devkit.dts b/arch/arm64/boot/dts/rockchip/rk3588-recomputer-devkit.dts
 new file mode 100644
 index 000000000000..310878b9b8d2
 --- /dev/null
-+++ b/arch/arm64/boot/dts/rockchip/rk3588-recomputer-rk.dts
++++ b/arch/arm64/boot/dts/rockchip/rk3588-recomputer-devkit.dts
 @@ -0,0 +1,1340 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
