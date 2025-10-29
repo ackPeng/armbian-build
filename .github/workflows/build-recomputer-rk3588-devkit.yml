@@ -105,7 +105,7 @@ jobs:
             pv pigz rsync zip xz-utils \
             qemu-user-static binfmt-support arch-test \
             parted dosfstools e2fsprogs squashfs-tools \
-            python3 python3-distutils python3-setuptools \
+            python3  python3-setuptools \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
           sudo apt-get clean
           # 显示磁盘状态
