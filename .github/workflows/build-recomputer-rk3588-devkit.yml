@@ -1,0 +1,194 @@
+name: Build recomputer-rk3588-devkit on Tag
+
+on:
+  create:
+    tags:
+      - '**'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name for the release'
+        required: true
+        type: string
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-24.04
+    env:
+      BOARD: recomputer-rk3588-devkit
+      DEFAULT_BRANCH: current
+      DEFAULT_RELEASE: bookworm
+    steps:
+      - name: Determine tag name
+        id: tag-name
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag_name=${{ github.event.inputs.tag_name }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "create" ]; then
+            echo "tag_name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          else
+            echo "Unknown event" >&2; exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Get CHANGELOG entry for tag
+        id: changelog
+        run: |
+          TAG='${{ steps.tag-name.outputs.tag_name }}'
+          echo "TAG=$TAG"
+
+          # 找到标签标题行 (允许后面跟描述)，示例: ## v1.0.0 Initial release
+          TITLE_LINE=$(grep -E "^##[[:space:]]*$TAG(\b|[[:space:]])" CHANGELOG.md | head -1 || true)
+          if [ -z "$TITLE_LINE" ]; then echo "Tag heading not found"; exit 1; fi
+
+          # 提取标题内容(去掉前缀 ## <tag>)，保留后续描述文字，可为空
+          TITLE=$(echo "$TITLE_LINE" | sed -E "s/^##[[:space:]]*$TAG[[:space:]]*//")
+
+          # 生成内容文件：从匹配标签行开始直到下一个以 ## 开头的标签行(不包含下一标签行)或文件末尾，保留所有原始行和空行
+          CONTENT_FILE=$(mktemp)
+          awk -v tag="$TAG" '
+            BEGIN { capture=0 }
+            /^##[[:space:]]+/ {
+              # 如果已经在捕获并遇到新的标签行(且不是当前标签行)，则结束
+              if (capture && $0 !~ "^##[[:space:]]*" tag "([[:space:]]|$)") exit
+            }
+            $0 ~ "^##[[:space:]]*" tag "([[:space:]]|$)" { capture=1 }
+            capture { print }
+          ' CHANGELOG.md > "$CONTENT_FILE"
+
+          if [ ! -s "$CONTENT_FILE" ]; then echo "Empty block"; exit 1; fi
+
+          # 检测板块: 需要出现三级标题行 ### recomputer-rk3588-devkit (允许前后空格)
+          if grep -Eq "^###[[:space:]]+${BOARD}[[:space:]]*$" "$CONTENT_FILE"; then
+            echo "skip_workflow=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip_workflow=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          # 输出变量：标题使用 “<tag> <描述>” 格式；若无描述则仅 tag
+          if [ -n "$TITLE" ]; then
+            echo "changelog_title=$TAG $TITLE" >> "$GITHUB_OUTPUT"
+          else
+            echo "changelog_title=$TAG" >> "$GITHUB_OUTPUT"
+          fi
+          echo "changelog_content=$CONTENT_FILE" >> "$GITHUB_OUTPUT"
+
+          echo "--- Captured block ---"
+          cat "$CONTENT_FILE"
+          echo "----------------------"
+
+      - name: Show parsed changelog
+        if: steps.changelog.outputs.skip_workflow == 'false'
+        run: |
+          echo "Title: ${{ steps.changelog.outputs.changelog_title }}"; echo "----"; cat "${{ steps.changelog.outputs.changelog_content }}"
+
+      - name: Install build dependencies (minimal)
+        if: steps.changelog.outputs.skip_workflow == 'false'
+        run: |
+          sudo apt-get -qq update
+          sudo apt-get install -y --no-install-recommends \
+            git curl jq bc bison flex build-essential \
+            libssl-dev libncurses5-dev libncursesw5-dev device-tree-compiler \
+            pv pigz rsync zip xz-utils
+          sudo apt-get clean
+
+      - name: Build image
+        id: build
+        if: steps.changelog.outputs.skip_workflow == 'false'
+        env:
+          BOARD: ${{ env.BOARD }}
+          BRANCH: ${{ env.DEFAULT_BRANCH }}
+          RELEASE: ${{ env.DEFAULT_RELEASE }}
+        run: |
+          set -e
+          ./compile.sh BOARD=${BOARD} BRANCH=${BRANCH} RELEASE=${RELEASE} \
+            BUILD_MINIMAL=yes BUILD_DESKTOP=no KERNEL_CONFIGURE=no COMPRESS_OUTPUTIMAGE=sha \
+            BUILD_IGNORE_UPDATES=yes
+          ls -lh output/images
+          echo "images_dir=output/images" >> "$GITHUB_OUTPUT"
+
+      - name: Check if release exists
+        id: check_release
+        if: steps.changelog.outputs.skip_workflow == 'false'
+        run: |
+          TAG='${{ steps.tag-name.outputs.tag_name }}'
+          API="https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG"
+          JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" "$API")
+          if echo "$JSON" | jq -e 'has("upload_url")' >/dev/null; then
+            echo "tag_exist=true" >> "$GITHUB_OUTPUT"
+            echo "upload_url=$(echo "$JSON" | jq -r .upload_url)" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exist=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release
+        id: create_release
+        if: steps.changelog.outputs.skip_workflow == 'false' && steps.check_release.outputs.tag_exist == 'false'
+        uses: actions/create-release@v1.1.4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.tag-name.outputs.tag_name }}
+          release_name: ${{ steps.changelog.outputs.changelog_title }}
+          body_path: ${{ steps.changelog.outputs.changelog_content }}
+          draft: false
+          prerelease: true
+
+      - name: Prepare assets
+        id: assets
+        if: steps.changelog.outputs.skip_workflow == 'false'
+        run: |
+          # Decide upload URL
+          if [ -n "${{ steps.create_release.outputs.upload_url }}" ]; then
+            echo "upload_url=${{ steps.create_release.outputs.upload_url }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "upload_url=${{ steps.check_release.outputs.upload_url }}" >> "$GITHUB_OUTPUT"
+          fi
+          DIR='${{ steps.build.outputs.images_dir }}'
+          # Collect image & checksum files
+          for f in $(find "$DIR" -maxdepth 1 -type f \( -name "*${BOARD}*.img*" -o -name "*${BOARD}*.sha" -o -name "*${BOARD}*md5*" \)); do
+            name=$(basename "$f")
+            safe=$(echo "$name" | tr '.' '_' | tr '-' '_')
+            echo "file_${safe}=$f" >> "$GITHUB_OUTPUT"
+            echo "name_${safe}=$name" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Upload assets
+        if: steps.changelog.outputs.skip_workflow == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          UPLOAD_URL='${{ steps.assets.outputs.upload_url }}'
+          # Iterate over collected file_* outputs
+          while IFS='=' read -r k v; do
+            case "$k" in file_*)
+              base=${k#file_}
+              path="$v"
+              name_key="name_${base}"
+              name=$(grep "^${name_key}=" <<< "${{ steps.assets.outputs.* }}" | cut -d'=' -f2)
+              echo "Uploading $path as $name"
+              # Use GitHub CLI for upload (fallback to curl if gh not available)
+              if command -v gh >/dev/null 2>&1; then
+                gh release upload '${{ steps.tag-name.outputs.tag_name }}' "$path" --clobber || echo "gh upload failed for $path"
+              else
+                curl -s -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/octet-stream" \
+                  --data-binary @"$path" "${UPLOAD_URL%%{*}}?name=$name" || echo "curl upload failed for $path"
+              fi
+            esac
+          done < <(echo '${{ toJSON(steps.assets.outputs) }}' | jq -r 'to_entries[] | "\(.key)=\(.value)"')
+
+      - name: Summary
+        if: steps.changelog.outputs.skip_workflow == 'false'
+        run: |
+          echo "Tag: ${{ steps.tag-name.outputs.tag_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "Board: $BOARD" >> $GITHUB_STEP_SUMMARY
+          echo "Images:" >> $GITHUB_STEP_SUMMARY
+          ls -lh '${{ steps.build.outputs.images_dir }}' >> $GITHUB_STEP_SUMMARY
+
+      - name: Skipped summary
+        if: steps.changelog.outputs.skip_workflow == 'true'
+        run: echo "Skipped build for tag (board heading not found in CHANGELOG)" >> $GITHUB_STEP_SUMMARY
