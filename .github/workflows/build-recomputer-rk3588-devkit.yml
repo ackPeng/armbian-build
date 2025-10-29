@@ -99,15 +99,9 @@ jobs:
       - name: Build image
         id: build
         if: steps.changelog.outputs.skip_workflow == 'false'
-        env:
-          BOARD: ${{ env.BOARD }}
-          BRANCH: ${{ env.DEFAULT_BRANCH }}
-          RELEASE: ${{ env.DEFAULT_RELEASE }}
         run: |
           set -e
-          ./compile.sh BOARD=${BOARD} BRANCH=${BRANCH} RELEASE=${RELEASE} \
-            BUILD_MINIMAL=yes BUILD_DESKTOP=no KERNEL_CONFIGURE=no COMPRESS_OUTPUTIMAGE=sha \
-            BUILD_IGNORE_UPDATES=yes
+          ./compile.sh build BOARD=recomputer-rk3588-devkit BRANCH=vendor BUILD_DESKTOP=yes BUILD_MINIMAL=no DESKTOP_APPGROUPS_SELECTED= DESKTOP_ENVIRONMENT=gnome DESKTOP_ENVIRONMENT_CONFIG_NAME=config_base KERNEL_CONFIGURE=no RELEASE=bookworm
           ls -lh output/images
           echo "images_dir=output/images" >> "$GITHUB_OUTPUT"
 
