@@ -216,8 +216,17 @@ jobs:
             echo "upload_url=${{ steps.check_release.outputs.upload_url }}" >> "$GITHUB_OUTPUT"
           fi
           DIR='${{ steps.build.outputs.images_dir }}'
-          # Collect image & checksum files
-          for f in $(find "$DIR" -maxdepth 1 -type f \( -name "*${BOARD}*.img*" -o -name "*${BOARD}*.sha" -o -name "*${BOARD}*md5*" \)); do
+
+          # 追加 rkspi_loader.img (若存在于 u-boot 工作树) 到镜像目录便于统一上传
+          UBOOT_LOADER=$(find cache/sources/u-boot-worktree -type f -name rkspi_loader.img 2>/dev/null | head -1 || true)
+          if [ -n "$UBOOT_LOADER" ]; then
+            cp "$UBOOT_LOADER" "$DIR/rkspi_loader.img" || true
+          fi
+
+          echo "Collected files in $DIR:"; ls -1 "$DIR" || true
+
+          # 遍历目录下全部普通文件(镜像、校验、loader 等)：逐个写入输出
+          for f in $(find "$DIR" -maxdepth 1 -type f); do
             name=$(basename "$f")
             safe=$(echo "$name" | tr '.' '_' | tr '-' '_')
             echo "file_${safe}=$f" >> "$GITHUB_OUTPUT"
