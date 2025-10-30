@@ -1,5 +1,17 @@
 # Changelog
 
+## v2.0.0 Initial 2 release
+### recomputer-rk3588-devkit 2
+- Demo entry to trigger CI build for this board.
+- Added board config and initial workflow.
+- Kernel branch: current; Distribution: bookworm.
+- Produces minimal (non-desktop) image and checksum files.
+
+### Notes
+- 222
+
+
+
 ## v1.0.0 Initial release
 ### recomputer-rk3588-devkit
 - Demo entry to trigger CI build for this board.
