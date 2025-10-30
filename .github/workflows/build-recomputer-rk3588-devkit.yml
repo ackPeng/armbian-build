@@ -174,7 +174,7 @@ jobs:
         if: steps.changelog.outputs.skip_workflow == 'false'
         run: |
           set -e
-          ./compile.sh build BOARD=recomputer-rk3588-devkit BRANCH=vendor BUILD_DESKTOP=yes BUILD_MINIMAL=no DESKTOP_APPGROUPS_SELECTED= DESKTOP_ENVIRONMENT=gnome DESKTOP_ENVIRONMENT_CONFIG_NAME=config_base KERNEL_CONFIGURE=no RELEASE=bookworm
+          ./compile.sh build BOARD=recomputer-rk3588-devkit BRANCH=vendor BUILD_DESKTOP=yes BUILD_MINIMAL=no DESKTOP_APPGROUPS_SELECTED= DESKTOP_ENVIRONMENT=gnome DESKTOP_ENVIRONMENT_CONFIG_NAME=config_base KERNEL_CONFIGURE=no RELEASE=bookworm COMPRESS_OUTPUTIMAGE=xz
           ls -lh output/images
           echo "images_dir=output/images" >> "$GITHUB_OUTPUT"
 
@@ -209,53 +209,73 @@ jobs:
         id: assets
         if: steps.changelog.outputs.skip_workflow == 'false'
         run: |
-          # Decide upload URL
           if [ -n "${{ steps.create_release.outputs.upload_url }}" ]; then
             echo "upload_url=${{ steps.create_release.outputs.upload_url }}" >> "$GITHUB_OUTPUT"
           else
             echo "upload_url=${{ steps.check_release.outputs.upload_url }}" >> "$GITHUB_OUTPUT"
           fi
           DIR='${{ steps.build.outputs.images_dir }}'
-
-          # 追加 rkspi_loader.img (若存在于 u-boot 工作树) 到镜像目录便于统一上传
           UBOOT_LOADER=$(find cache/sources/u-boot-worktree -type f -name rkspi_loader.img 2>/dev/null | head -1 || true)
           if [ -n "$UBOOT_LOADER" ]; then
             cp "$UBOOT_LOADER" "$DIR/rkspi_loader.img" || true
           fi
+          echo "Listing files in $DIR"; ls -lh "$DIR" || true
+          COMP_IMG=$(ls "$DIR"/*.img.xz 2>/dev/null | head -1 || true)
+          COMP_SHA=$(ls "$DIR"/*.img.xz.sha 2>/dev/null | head -1 || true)
+          COMP_TXT=$(ls "$DIR"/*.img.xz.txt 2>/dev/null | head -1 || true)
+          [ -n "$COMP_IMG" ] && echo "comp_img_path=$COMP_IMG" >> "$GITHUB_OUTPUT" && echo "comp_img_name=$(basename "$COMP_IMG")" >> "$GITHUB_OUTPUT"
+          [ -n "$COMP_SHA" ] && echo "comp_sha_path=$COMP_SHA" >> "$GITHUB_OUTPUT" && echo "comp_sha_name=$(basename "$COMP_SHA")" >> "$GITHUB_OUTPUT"
+          [ -n "$COMP_TXT" ] && echo "comp_txt_path=$COMP_TXT" >> "$GITHUB_OUTPUT" && echo "comp_txt_name=$(basename "$COMP_TXT")" >> "$GITHUB_OUTPUT"
+          # 额外上传 rkspi_loader.img（若存在）
+          LOADER_FILE="$DIR/rkspi_loader.img"
+          if [ -f "$LOADER_FILE" ]; then
+            echo "loader_path=$LOADER_FILE" >> "$GITHUB_OUTPUT"
+            echo "loader_name=rkspi_loader.img" >> "$GITHUB_OUTPUT"
+          fi
 
-          echo "Collected files in $DIR:"; ls -1 "$DIR" || true
-
-          # 遍历目录下全部普通文件(镜像、校验、loader 等)：逐个写入输出
-          for f in $(find "$DIR" -maxdepth 1 -type f); do
-            name=$(basename "$f")
-            safe=$(echo "$name" | tr '.' '_' | tr '-' '_')
-            echo "file_${safe}=$f" >> "$GITHUB_OUTPUT"
-            echo "name_${safe}=$name" >> "$GITHUB_OUTPUT"
-          done
-
-      - name: Upload assets
-        if: steps.changelog.outputs.skip_workflow == 'false'
+      - name: Upload compressed image (.img.xz)
+        if: steps.changelog.outputs.skip_workflow == 'false' && steps.assets.outputs.comp_img_path != ''
+        uses: actions/upload-release-asset@v1.0.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          UPLOAD_URL='${{ steps.assets.outputs.upload_url }}'
-          # Iterate over collected file_* outputs
-          while IFS='=' read -r k v; do
-            case "$k" in file_*)
-              base=${k#file_}
-              path="$v"
-              name_key="name_${base}"
-              name=$(grep "^${name_key}=" <<< "${{ steps.assets.outputs.* }}" | cut -d'=' -f2)
-              echo "Uploading $path as $name"
-              # Use GitHub CLI for upload (fallback to curl if gh not available)
-              if command -v gh >/dev/null 2>&1; then
-                gh release upload '${{ steps.tag-name.outputs.tag_name }}' "$path" --clobber || echo "gh upload failed for $path"
-              else
-                curl -s -H "Authorization: token $GITHUB_TOKEN" -H "Content-Type: application/octet-stream" \
-                  --data-binary @"$path" "${UPLOAD_URL%%{*}}?name=$name" || echo "curl upload failed for $path"
-              fi
-            esac
-          done < <(echo '${{ toJSON(steps.assets.outputs) }}' | jq -r 'to_entries[] | "\(.key)=\(.value)"')
+        with:
+          upload_url: ${{ steps.assets.outputs.upload_url }}
+          asset_path: ${{ steps.assets.outputs.comp_img_path }}
+          asset_name: ${{ steps.assets.outputs.comp_img_name }}
+          asset_content_type: application/x-xz
+
+      - name: Upload compressed checksum (.img.xz.sha)
+        if: steps.changelog.outputs.skip_workflow == 'false' && steps.assets.outputs.comp_sha_path != ''
+        uses: actions/upload-release-asset@v1.0.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.assets.outputs.upload_url }}
+          asset_path: ${{ steps.assets.outputs.comp_sha_path }}
+          asset_name: ${{ steps.assets.outputs.comp_sha_name }}
+          asset_content_type: text/plain
+
+      - name: Upload compressed info (.img.xz.txt)
+        if: steps.changelog.outputs.skip_workflow == 'false' && steps.assets.outputs.comp_txt_path != ''
+        uses: actions/upload-release-asset@v1.0.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.assets.outputs.upload_url }}
+          asset_path: ${{ steps.assets.outputs.comp_txt_path }}
+          asset_name: ${{ steps.assets.outputs.comp_txt_name }}
+          asset_content_type: text/plain
+
+      - name: Upload loader image (rkspi_loader.img)
+        if: steps.changelog.outputs.skip_workflow == 'false' && steps.assets.outputs.loader_path != ''
+        uses: actions/upload-release-asset@v1.0.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.assets.outputs.upload_url }}
+          asset_path: ${{ steps.assets.outputs.loader_path }}
+          asset_name: ${{ steps.assets.outputs.loader_name }}
+          asset_content_type: application/octet-stream
 
       - name: Summary
         if: steps.changelog.outputs.skip_workflow == 'false'
